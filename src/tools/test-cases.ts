@@ -110,8 +110,10 @@ export const searchTestCases = async (input: SearchTestCasesInput) => {
 
 export const getTestCase = async (input: { testCaseId: string }) => {
   try {
-    const testCase = await getZephyrClient().getTestCase(input.testCaseId);
-    
+    const zephyr = getZephyrClient();
+    const testCase = await zephyr.getTestCase(input.testCaseId);
+    const steps = await zephyr.getTestCaseSteps(input.testCaseId);
+
     return {
       success: true,
       data: {
@@ -132,6 +134,11 @@ export const getTestCase = async (input: { testCaseId: string }) => {
         customFields: testCase.customFields,
         links: testCase.links,
         testScript: testCase.testScript,
+        steps: steps.map((step: any) => ({
+          description: step.inline?.description || step.description,
+          testData: step.inline?.testData || step.testData,
+          expectedResult: step.inline?.expectedResult || step.expectedResult,
+        })),
       },
     };
   } catch (error: any) {

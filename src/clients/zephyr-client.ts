@@ -333,4 +333,9 @@ export class ZephyrClient {
       },
     };
   }
+
+  async getTestCaseSteps(testCaseId: string): Promise<any[]> {
+    const response = await this.client.get(`/testcases/${testCaseId}/teststeps`);
+    return response.data.values || response.data;
+  }
 }
