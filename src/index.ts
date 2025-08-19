@@ -249,6 +249,28 @@ const TOOLS = [
     },
   },
   {
+    name: 'debug_test_case_steps',
+    description: 'Debug: Get test steps for a specific test case',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        testCaseId: { type: 'string', description: 'Test case ID or key' },
+      },
+      required: ['testCaseId'],
+    },
+  },
+  {
+    name: 'debug_test_case_info',
+    description: 'Debug: Get complete test case information including steps details',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        testCaseId: { type: 'string', description: 'Test case ID or key' },
+      },
+      required: ['testCaseId'],
+    },
+  },
+  {
     name: 'create_multiple_test_cases',
     description: 'Create multiple test cases in Zephyr at once',
     inputSchema: {
@@ -465,6 +487,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: 'text',
               text: JSON.stringify(await getTestCase(validatedArgs), null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'debug_test_case_steps': {
+        const validatedArgs = validateInput<GetTestCaseInput>(getTestCaseSchema, args, 'debug_test_case_steps');
+        const zephyr = new (await import('./clients/zephyr-client.js')).ZephyrClient();
+        const steps = await zephyr.debugTestCaseSteps(validatedArgs.testCaseId);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ success: true, data: steps }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'debug_test_case_info': {
+        const validatedArgs = validateInput<GetTestCaseInput>(getTestCaseSchema, args, 'debug_test_case_info');
+        const zephyr = new (await import('./clients/zephyr-client.js')).ZephyrClient();
+        const info = await zephyr.debugTestCaseInfo(validatedArgs.testCaseId);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ success: true, data: info }, null, 2),
             },
           ],
         };

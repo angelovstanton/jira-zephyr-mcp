@@ -258,7 +258,109 @@ export class ZephyrClient {
     }
 
     const response = await this.client.post('/testcases', payload);
-    return response.data;
+    const testCase = response.data;
+
+    // If test script has steps, create them separately
+    if (data.testScript?.type === 'STEP_BY_STEP' && data.testScript.steps && data.testScript.steps.length > 0) {
+      console.log(`Test case ${testCase.key} created successfully. Now creating ${data.testScript.steps.length} test steps...`);
+      try {
+        await this.createTestCaseSteps(testCase.key, data.testScript.steps);
+        console.log(`Successfully created all test steps for test case ${testCase.key}`);
+      } catch (error: any) {
+        console.error('Failed to create test steps for test case', testCase.key, ':', {
+          error: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+        });
+        // Don't fail the test case creation if steps fail, but log the error clearly
+        console.warn('Test case was created but steps failed. You may need to add steps manually in the UI.');
+      }
+    } else {
+      console.log(`Test case ${testCase.key} created without steps (no STEP_BY_STEP script provided)`);
+    }
+
+    return testCase;
+  }
+
+  // Keep signature as-is; only the payload changes.
+  async createTestCaseSteps(
+    testCaseKey: string,
+    steps: Array<{ index?: number; description: string; testData?: string; expectedResult?: string }>
+  ): Promise<void> {
+    if (!Array.isArray(steps) || steps.length === 0) {
+      throw new Error('No steps to post. Provide at least one step.');
+    }
+    if (steps.length > 100) {
+      throw new Error(`Too many steps (${steps.length}). Zephyr Scale bulk limit is 100.`);
+    }
+  
+    const payload = {
+      mode: 'OVERWRITE', // or 'APPEND'
+      items: steps
+        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+        .map(s => ({
+          inline: {
+            description: s.description,
+            testData: s.testData ?? '',
+            expectedResult: s.expectedResult ?? ''
+          }
+        }))
+    };
+  
+    const res = await this.client.post(
+      `/testcases/${encodeURIComponent(testCaseKey)}/teststeps`,
+      payload,
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+  
+    if (res.status !== 201) {
+      throw new Error(`Unexpected status ${res.status} while creating steps`);
+    }
+  }
+  
+
+  async debugTestCaseSteps(testCaseKey: string): Promise<any> {
+    try {
+      const response = await this.client.get(`/testcases/${testCaseKey}/teststeps`);
+      console.log('Current test steps for test case:', testCaseKey, response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to get test steps:', {
+        testCaseKey,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+      });
+      throw error;
+    }
+  }
+
+  async debugTestCaseInfo(testCaseKey: string): Promise<any> {
+    try {
+      console.log(`Debugging test case info for: ${testCaseKey}`);
+      const testCaseResponse = await this.client.get(`/testcases/${testCaseKey}`);
+      console.log('Test case details:', testCaseResponse.data);
+      
+      try {
+        const stepsResponse = await this.client.get(`/testcases/${testCaseKey}/teststeps`);
+        console.log('Test steps details:', stepsResponse.data);
+        return {
+          testCase: testCaseResponse.data,
+          steps: stepsResponse.data,
+        };
+      } catch (stepsError: any) {
+        console.log('Steps endpoint error:', stepsError.response?.data || stepsError.message);
+        return {
+          testCase: testCaseResponse.data,
+          steps: null,
+          stepsError: stepsError.response?.data || stepsError.message,
+        };
+      }
+    } catch (error: any) {
+      console.error('Failed to get test case info:', error.response?.data || error.message);
+      throw error;
+    }
   }
 
   async createMultipleTestCases(testCases: Array<{
@@ -296,7 +398,12 @@ export class ZephyrClient {
       failed: number;
     };
   }> {
-    const results = [];
+    const results: Array<{
+      index: number;
+      success: boolean;
+      data?: ZephyrTestCase;
+      error?: string;
+    }> = [];
     let successful = 0;
     let failed = 0;
 
