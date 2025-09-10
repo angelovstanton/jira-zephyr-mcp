@@ -91,6 +91,71 @@ export const createMultipleTestCasesSchema = z.object({
   continueOnError: z.boolean().default(true),
 });
 
+export const updateTestCaseSchema = z.object({
+  testCaseId: z.string()
+    .min(1, 'Test case ID is required')
+    .regex(/^[A-Z]+-T\d+$/, 'Test case ID must be in format PROJECT-T123 (e.g., CSRP-T123)'),
+  
+  updates: z.object({
+    // Basic fields
+    name: z.string().min(1).optional().describe('Test case title/name'),
+    objective: z.string().optional().describe('Test case objective/description'),
+    precondition: z.string().optional().describe('Test preconditions'),
+    estimatedTime: z.number().min(0).optional().describe('Estimated execution time in minutes'),
+    
+    // Status and priority
+    priority: z.string().optional().describe('Priority (e.g., High, Medium, Low)'),
+    status: z.string().optional().describe('Status (e.g., Draft, Approved, Deprecated)'),
+    
+    // Organization
+    folderId: z.string().optional().describe('Folder ID to move test case'),
+    labels: z.array(z.string()).optional().describe('Labels/tags for the test case'),
+    componentId: z.string().optional().describe('Component ID'),
+    
+    // Test script - complete replacement
+    testScript: z.object({
+      type: z.enum(['STEP_BY_STEP', 'PLAIN_TEXT']),
+      steps: z.array(z.object({
+        index: z.number().min(1).describe('Step number (1-based)'),
+        description: z.string().min(1).describe('Step description'),
+        testData: z.string().optional().describe('Test data for this step'),
+        expectedResult: z.string().min(1).describe('Expected result'),
+      })).optional().describe('Test steps for STEP_BY_STEP type'),
+      text: z.string().optional().describe('Plain text script for PLAIN_TEXT type'),
+    }).optional().describe('Test script with steps or plain text'),
+    
+    // Step operations - for partial updates
+    stepOperations: z.object({
+      mode: z.enum(['REPLACE', 'APPEND', 'UPDATE', 'DELETE']).describe('How to modify steps'),
+      steps: z.array(z.object({
+        index: z.number().min(1).describe('Step number to update/delete (1-based)'),
+        description: z.string().optional().describe('New step description'),
+        testData: z.string().optional().describe('New test data'),
+        expectedResult: z.string().optional().describe('New expected result'),
+      })).optional().describe('Steps to add/update/delete'),
+      deleteIndexes: z.array(z.number()).optional().describe('Step indexes to delete (for DELETE mode)'),
+    }).optional().describe('Operations for modifying individual steps'),
+    
+    // Custom fields
+    customFields: z.record(z.any()).optional().describe('Custom field values'),
+    
+    // Additional metadata
+    testType: z.enum(['MANUAL', 'AUTOMATED', 'BOTH']).optional().describe('Test type'),
+    owner: z.string().optional().describe('Owner email or account ID'),
+  }).refine(
+    data => Object.keys(data).length > 0,
+    { message: 'At least one field must be provided for update' }
+  ),
+  
+  // Update options
+  options: z.object({
+    preserveUnsetFields: z.boolean().default(true).describe('Keep fields not specified in update'),
+    validateSteps: z.boolean().default(true).describe('Validate step consistency'),
+    createBackup: z.boolean().default(false).describe('Create backup before update'),
+    returnUpdated: z.boolean().default(true).describe('Return updated test case in response'),
+  }).optional(),
+});
+
 export const getTestCasesSchema = z.object({
   projectKey: z.string().min(1, 'Project key is required'),
   filters: z.object({
@@ -175,4 +240,5 @@ export type GenerateTestReportInput = z.infer<typeof generateTestReportSchema>;
 export type CreateTestCaseInput = z.infer<typeof createTestCaseSchema>;
 export type GetTestCaseInput = z.infer<typeof getTestCaseSchema>;
 export type CreateMultipleTestCasesInput = z.infer<typeof createMultipleTestCasesSchema>;
+export type UpdateTestCaseInput = z.infer<typeof updateTestCaseSchema>;
 export type GetTestCasesInput = z.infer<typeof getTestCasesSchema>;

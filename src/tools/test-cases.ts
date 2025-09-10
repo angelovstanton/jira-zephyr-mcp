@@ -3,9 +3,11 @@ import {
   createTestCaseSchema,
   createMultipleTestCasesSchema,
   getTestCasesSchema,
+  updateTestCaseSchema,
   CreateTestCaseInput,
   CreateMultipleTestCasesInput,
   GetTestCasesInput,
+  UpdateTestCaseInput,
 } from '../utils/validation.js';
 
 let zephyrClient: ZephyrClient | null = null;
@@ -85,6 +87,104 @@ export const createTestCase = async (input: CreateTestCaseInput) => {
 };
 
 
+export const updateTestCase = async (input: UpdateTestCaseInput) => {
+  const validatedInput = updateTestCaseSchema.parse(input);
+  
+  try {
+    const zephyr = getZephyrClient();
+    
+    // Get current test case if we need to preserve fields or create backup
+    let originalTestCase = null;
+    if (validatedInput.options?.createBackup || validatedInput.options?.preserveUnsetFields) {
+      originalTestCase = await zephyr.getTestCase(validatedInput.testCaseId);
+    }
+    
+    // Create backup object if requested
+    const backup = validatedInput.options?.createBackup ? {
+      timestamp: new Date().toISOString(),
+      testCaseId: validatedInput.testCaseId,
+      original: originalTestCase,
+    } : null;
+    
+    // Perform the update
+    const updatedTestCase = await zephyr.updateTestCase(
+      validatedInput.testCaseId,
+      validatedInput.updates
+    );
+    
+    // Get updated test case with steps if requested
+    let finalTestCase = updatedTestCase;
+    if (validatedInput.options?.returnUpdated) {
+      finalTestCase = await zephyr.getTestCase(validatedInput.testCaseId);
+      
+      // Get steps if they were updated
+      if (validatedInput.updates.testScript || validatedInput.updates.stepOperations) {
+        try {
+          const steps = await zephyr.getTestCaseSteps(validatedInput.testCaseId);
+          finalTestCase.steps = steps.map((step: any) => ({
+            index: step.index,
+            description: step.inline?.description || step.description,
+            testData: step.inline?.testData || step.testData,
+            expectedResult: step.inline?.expectedResult || step.expectedResult,
+          }));
+        } catch (error) {
+          console.warn('Failed to retrieve updated steps:', error);
+        }
+      }
+    }
+    
+    // Prepare response
+    const response: any = {
+      success: true,
+      data: {
+        testCase: finalTestCase,
+        updatedFields: Object.keys(validatedInput.updates),
+        message: `Test case ${validatedInput.testCaseId} updated successfully`,
+      },
+    };
+    
+    // Include backup if created
+    if (backup) {
+      response.data.backup = backup;
+    }
+    
+    // Add summary of changes
+    if (validatedInput.updates.stepOperations) {
+      const { mode, steps, deleteIndexes } = validatedInput.updates.stepOperations;
+      response.data.stepChanges = {
+        mode,
+        stepsModified: steps?.length || 0,
+        stepsDeleted: deleteIndexes?.length || 0,
+      };
+    }
+    
+    return response;
+    
+  } catch (error: any) {
+    // Provide detailed error information
+    let errorMessage = error.response?.data?.message || error.message;
+    
+    if (error.response?.status === 404) {
+      errorMessage = `Test case ${validatedInput.testCaseId} not found`;
+    } else if (error.response?.status === 400) {
+      errorMessage = `Invalid update data: ${errorMessage}`;
+    } else if (error.response?.status === 403) {
+      errorMessage = 'Permission denied to update this test case';
+    }
+    
+    return {
+      success: false,
+      error: errorMessage,
+      details: {
+        testCaseId: validatedInput.testCaseId,
+        attemptedUpdates: Object.keys(validatedInput.updates),
+        originalError: error.response?.data || error.message,
+        status: error.response?.status,
+      },
+    };
+  }
+};
+
 export const getTestCase = async (input: { testCaseId: string }) => {
   try {
     const zephyr = getZephyrClient();
@@ -139,7 +239,39 @@ export const getTestCases = async (input: GetTestCasesInput) => {
       validatedInput.offset || 0
     );
     
-    let filteredTestCases = allTestCases.testCases;
+    console.log(`Retrieved ${allTestCases.testCases.length} test cases for filtering`);
+    
+    // Check if we need to fetch additional details for folder/label filtering
+    const needsFolderOrLabelDetails = validatedInput.filters && (
+      validatedInput.filters.folderId !== undefined ||
+      validatedInput.filters.folderPath !== undefined ||
+      (validatedInput.filters.labels !== undefined && validatedInput.filters.labels.length > 0)
+    );
+    
+    let enrichedTestCases = allTestCases.testCases;
+    
+    // If we need folder/label details and they're not present, fetch them
+    if (needsFolderOrLabelDetails && allTestCases.testCases.length > 0) {
+      const sample = allTestCases.testCases[0];
+      const hasCompleteData = sample.folder || sample.labels;
+      
+      if (!hasCompleteData) {
+        console.log('Fetching additional test case details for folder/label filtering...');
+        enrichedTestCases = await Promise.all(
+          allTestCases.testCases.slice(0, Math.min(allTestCases.testCases.length, 200)).map(async (tc) => {
+            try {
+              const detailed = await zephyr.getTestCase(tc.key);
+              return { ...tc, ...detailed };
+            } catch (error) {
+              console.warn(`Failed to get details for ${tc.key}, using basic data`);
+              return tc;
+            }
+          })
+        );
+      }
+    }
+    
+    let filteredTestCases = enrichedTestCases;
     
     // Apply filters if provided
     if (validatedInput.filters) {
@@ -218,28 +350,60 @@ export const getTestCases = async (input: GetTestCasesInput) => {
           matches.push(priorityMatch);
         }
         
-        // Folder filter
+        // Folder filter - handle different folder structures
         if (filters.folderId !== undefined) {
-          const folderMatch = testCase.folder?.id === filters.folderId;
+          // Check various possible folder ID locations
+          const folderId = testCase.folder?.id || 
+                          testCase.folderId || 
+                          (typeof testCase.folder === 'string' ? testCase.folder : null);
+          const folderMatch = folderId === filters.folderId;
           matches.push(folderMatch);
         }
         
         if (filters.folderPath !== undefined) {
-          const folderPath = testCase.folder?.name || testCase.folder?.path;
-          const pathMatch = caseSensitive
-            ? folderPath === filters.folderPath
-            : folderPath?.toLowerCase() === filters.folderPath.toLowerCase();
-          matches.push(pathMatch || false);
+          // Check various possible folder path locations
+          const folderPath = testCase.folder?.name || 
+                           testCase.folder?.path || 
+                           testCase.folderName ||
+                           (typeof testCase.folder === 'string' ? testCase.folder : null);
+          
+          if (folderPath) {
+            // Handle both exact match and path contains
+            const pathMatch = caseSensitive
+              ? (folderPath === filters.folderPath || folderPath.includes(filters.folderPath))
+              : (folderPath.toLowerCase() === filters.folderPath.toLowerCase() || 
+                 folderPath.toLowerCase().includes(filters.folderPath.toLowerCase()));
+            matches.push(pathMatch);
+          } else {
+            matches.push(false);
+          }
         }
         
-        // Labels filter
+        // Labels filter - handle different label structures
         if (filters.labels !== undefined && filters.labels.length > 0) {
-          const labelMatch = filters.labels.some(label => 
-            testCase.labels?.some(tcLabel => 
-              caseSensitive 
-                ? tcLabel === label
-                : tcLabel.toLowerCase() === label.toLowerCase()
-            )
+          // Get labels from various possible locations
+          let testCaseLabels: string[] = [];
+          
+          if (Array.isArray(testCase.labels)) {
+            testCaseLabels = testCase.labels.map(label => 
+              typeof label === 'object' ? (label.name || label.value || String(label)) : String(label)
+            );
+          } else if (typeof testCase.labels === 'string') {
+            // Handle comma-separated labels
+            testCaseLabels = testCase.labels.split(',').map(l => l.trim());
+          } else if (testCase.labels && typeof testCase.labels === 'object') {
+            // Handle object with name property
+            testCaseLabels = [testCase.labels.name || testCase.labels.value || String(testCase.labels)];
+          }
+          
+          // Check if any of the filter labels match
+          const labelMatch = filters.labels.some(filterLabel => 
+            testCaseLabels.some(tcLabel => {
+              const normalizedTcLabel = caseSensitive ? tcLabel : tcLabel.toLowerCase();
+              const normalizedFilterLabel = caseSensitive ? filterLabel : filterLabel.toLowerCase();
+              return normalizedTcLabel === normalizedFilterLabel || 
+                     normalizedTcLabel.includes(normalizedFilterLabel);
+            })
           );
           matches.push(labelMatch);
         }
@@ -377,9 +541,9 @@ export const getTestCases = async (input: GetTestCasesInput) => {
     }
     
     // Include additional details if requested
-    let enrichedTestCases = filteredTestCases;
+    let finalTestCases = filteredTestCases;
     if (validatedInput.includeSteps || validatedInput.includeDetails) {
-      enrichedTestCases = await Promise.all(
+      finalTestCases = await Promise.all(
         filteredTestCases.map(async (testCase) => {
           const enriched = { ...testCase };
           
@@ -409,8 +573,8 @@ export const getTestCases = async (input: GetTestCasesInput) => {
     return {
       success: true,
       data: {
-        testCases: enrichedTestCases,
-        total: enrichedTestCases.length,
+        testCases: finalTestCases,
+        total: filteredTestCases.length,
         totalAvailable: allTestCases.total,
         filters: validatedInput.filters,
         searchMode: validatedInput.searchMode,

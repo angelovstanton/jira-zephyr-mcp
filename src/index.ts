@@ -16,7 +16,7 @@ import {
   linkTestsToIssues,
   generateTestReport,
 } from './tools/test-execution.js';
-import { createTestCase, getTestCase, createMultipleTestCases, getTestCases } from './tools/test-cases.js';
+import { createTestCase, getTestCase, createMultipleTestCases, getTestCases, updateTestCase } from './tools/test-cases.js';
 import {
   readJiraIssueSchema,
   createTestPlanSchema,
@@ -30,6 +30,7 @@ import {
   createTestCaseSchema,
   getTestCaseSchema,
   createMultipleTestCasesSchema,
+  updateTestCaseSchema,
   getTestCasesSchema,
   ReadJiraIssueInput,
   CreateTestPlanInput,
@@ -43,6 +44,7 @@ import {
   CreateTestCaseInput,
   GetTestCaseInput,
   CreateMultipleTestCasesInput,
+  UpdateTestCaseInput,
   GetTestCasesInput,
 } from './utils/validation.js';
 
@@ -310,6 +312,112 @@ const TOOLS = [
         continueOnError: { type: 'boolean', description: 'Continue creating remaining test cases if one fails (default: true)', default: true },
       },
       required: ['testCases'],
+    },
+  },
+  {
+    name: 'update_test_case',
+    description: 'Update an existing test case including title, fields, steps, and expected results. Supports complete replacement or partial updates.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        testCaseId: { 
+          type: 'string', 
+          description: 'Test case ID in format PROJECT-T123 (e.g., "CSRP-T123")' 
+        },
+        updates: {
+          type: 'object',
+          description: 'Fields to update (all optional)',
+          properties: {
+            // Basic fields
+            name: { type: 'string', description: 'Test case title/name' },
+            objective: { type: 'string', description: 'Test case objective/description' },
+            precondition: { type: 'string', description: 'Test preconditions' },
+            estimatedTime: { type: 'number', minimum: 0, description: 'Estimated execution time in minutes' },
+            
+            // Status and priority
+            priority: { type: 'string', description: 'Priority (e.g., High, Medium, Low)' },
+            status: { type: 'string', description: 'Status (e.g., Draft, Approved, Deprecated)' },
+            
+            // Organization
+            folderId: { type: 'string', description: 'Folder ID to move test case' },
+            labels: { type: 'array', items: { type: 'string' }, description: 'Labels/tags for the test case' },
+            componentId: { type: 'string', description: 'Component ID' },
+            
+            // Complete test script replacement
+            testScript: {
+              type: 'object',
+              description: 'Replace entire test script',
+              properties: {
+                type: { type: 'string', enum: ['STEP_BY_STEP', 'PLAIN_TEXT'], description: 'Script type' },
+                steps: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      index: { type: 'number', minimum: 1, description: 'Step number (1-based)' },
+                      description: { type: 'string', description: 'Step description' },
+                      testData: { type: 'string', description: 'Test data for this step' },
+                      expectedResult: { type: 'string', description: 'Expected result' },
+                    },
+                    required: ['index', 'description', 'expectedResult'],
+                  },
+                  description: 'Test steps for STEP_BY_STEP type',
+                },
+                text: { type: 'string', description: 'Plain text script for PLAIN_TEXT type' },
+              },
+              required: ['type'],
+            },
+            
+            // Partial step updates
+            stepOperations: {
+              type: 'object',
+              description: 'Operations for modifying individual steps',
+              properties: {
+                mode: { 
+                  type: 'string', 
+                  enum: ['REPLACE', 'APPEND', 'UPDATE', 'DELETE'], 
+                  description: 'How to modify steps: REPLACE (all), APPEND (add), UPDATE (modify specific), DELETE (remove specific)' 
+                },
+                steps: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      index: { type: 'number', minimum: 1, description: 'Step number (1-based)' },
+                      description: { type: 'string', description: 'New step description' },
+                      testData: { type: 'string', description: 'New test data' },
+                      expectedResult: { type: 'string', description: 'New expected result' },
+                    },
+                    required: ['index'],
+                  },
+                  description: 'Steps to add/update',
+                },
+                deleteIndexes: { 
+                  type: 'array', 
+                  items: { type: 'number', minimum: 1 }, 
+                  description: 'Step indexes to delete (for DELETE mode)' 
+                },
+              },
+              required: ['mode'],
+            },
+            
+            // Additional fields
+            customFields: { type: 'object', description: 'Custom field values' },
+            testType: { type: 'string', enum: ['MANUAL', 'AUTOMATED', 'BOTH'], description: 'Test type' },
+          },
+        },
+        options: {
+          type: 'object',
+          description: 'Update options',
+          properties: {
+            preserveUnsetFields: { type: 'boolean', default: true, description: 'Keep fields not specified in update' },
+            validateSteps: { type: 'boolean', default: true, description: 'Validate step consistency' },
+            createBackup: { type: 'boolean', default: false, description: 'Include original test case in response' },
+            returnUpdated: { type: 'boolean', default: true, description: 'Return updated test case in response' },
+          },
+        },
+      },
+      required: ['testCaseId', 'updates'],
     },
   },
   {
@@ -610,6 +718,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: 'text',
               text: JSON.stringify(await createMultipleTestCases(validatedArgs), null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'update_test_case': {
+        console.log('update_test_case called with args:', JSON.stringify(args, null, 2));
+        const validatedArgs = validateInput<UpdateTestCaseInput>(updateTestCaseSchema, args, 'update_test_case');
+        const result = await updateTestCase(validatedArgs);
+        console.log('update_test_case result:', result.success ? 'Success' : 'Failed');
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };

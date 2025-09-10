@@ -520,6 +520,165 @@ export class ZephyrClient {
     return response.data.values || response.data;
   }
 
+  async updateTestCase(testCaseId: string, updates: any): Promise<ZephyrTestCase> {
+    try {
+      console.log(`Updating test case ${testCaseId} with:`, JSON.stringify(updates, null, 2));
+      
+      // Prepare the payload for Zephyr API
+      const payload: any = {};
+      
+      // Map fields to Zephyr API format
+      if (updates.name !== undefined) payload.name = updates.name;
+      if (updates.objective !== undefined) payload.objective = updates.objective;
+      if (updates.precondition !== undefined) payload.precondition = updates.precondition;
+      if (updates.estimatedTime !== undefined) payload.estimatedTime = updates.estimatedTime;
+      if (updates.priority !== undefined) payload.priority = updates.priority;
+      if (updates.status !== undefined) payload.status = updates.status;
+      if (updates.folderId !== undefined) payload.folderId = updates.folderId;
+      if (updates.labels !== undefined) payload.labels = updates.labels;
+      if (updates.componentId !== undefined) payload.componentId = updates.componentId;
+      if (updates.customFields !== undefined) payload.customFields = updates.customFields;
+      if (updates.testType !== undefined) payload.testType = updates.testType;
+      
+      // Update the test case basic fields
+      const response = await this.client.put(`/testcases/${testCaseId}`, payload);
+      console.log(`Test case ${testCaseId} basic fields updated successfully`);
+      
+      // Handle test script/steps updates separately
+      if (updates.testScript || updates.stepOperations) {
+        await this.updateTestCaseSteps(testCaseId, updates.testScript, updates.stepOperations);
+      }
+      
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to update test case:', {
+        testCaseId,
+        status: error.response?.status,
+        message: error.response?.data?.message || error.message,
+        data: error.response?.data,
+      });
+      throw error;
+    }
+  }
+
+  async updateTestCaseSteps(
+    testCaseId: string, 
+    testScript?: any, 
+    stepOperations?: any
+  ): Promise<void> {
+    try {
+      // If testScript is provided, it's a complete replacement
+      if (testScript && testScript.type === 'STEP_BY_STEP' && testScript.steps) {
+        console.log(`Replacing all steps for test case ${testCaseId}`);
+        await this.createTestCaseSteps(testCaseId, testScript.steps);
+        return;
+      }
+      
+      // Handle step operations (partial updates)
+      if (stepOperations) {
+        const { mode, steps, deleteIndexes } = stepOperations;
+        
+        switch (mode) {
+          case 'REPLACE':
+            // Replace all steps with new ones
+            if (steps && steps.length > 0) {
+              console.log(`Replacing all steps for test case ${testCaseId}`);
+              await this.createTestCaseSteps(testCaseId, steps);
+            }
+            break;
+            
+          case 'APPEND':
+            // Get existing steps and append new ones
+            if (steps && steps.length > 0) {
+              console.log(`Appending ${steps.length} steps to test case ${testCaseId}`);
+              const existingSteps = await this.getTestCaseSteps(testCaseId);
+              const maxIndex = existingSteps.length;
+              const newSteps = steps.map((step: any, idx: number) => ({
+                ...step,
+                index: step.index || (maxIndex + idx + 1)
+              }));
+              
+              // Combine existing and new steps
+              const allSteps = [...existingSteps, ...newSteps];
+              await this.createTestCaseSteps(testCaseId, allSteps);
+            }
+            break;
+            
+          case 'UPDATE':
+            // Update specific steps by index
+            if (steps && steps.length > 0) {
+              console.log(`Updating ${steps.length} steps in test case ${testCaseId}`);
+              const existingSteps = await this.getTestCaseSteps(testCaseId);
+              
+              // Create a map of updates by index
+              const updateMap = new Map(steps.map((s: any) => [s.index, s]));
+              
+              // Apply updates to existing steps
+              const updatedSteps = existingSteps.map((existing: any, idx: number) => {
+                const stepIndex = idx + 1; // 1-based index
+                const update = updateMap.get(stepIndex);
+                
+                if (update) {
+                  return {
+                    index: stepIndex,
+                    description: update.description || existing.inline?.description || existing.description,
+                    testData: update.testData !== undefined ? update.testData : (existing.inline?.testData || existing.testData || ''),
+                    expectedResult: update.expectedResult || existing.inline?.expectedResult || existing.expectedResult,
+                  };
+                }
+                
+                return {
+                  index: stepIndex,
+                  description: existing.inline?.description || existing.description,
+                  testData: existing.inline?.testData || existing.testData || '',
+                  expectedResult: existing.inline?.expectedResult || existing.expectedResult,
+                };
+              });
+              
+              await this.createTestCaseSteps(testCaseId, updatedSteps);
+            }
+            break;
+            
+          case 'DELETE':
+            // Delete specific steps by index
+            if (deleteIndexes && deleteIndexes.length > 0) {
+              console.log(`Deleting steps at indexes ${deleteIndexes} from test case ${testCaseId}`);
+              const existingSteps = await this.getTestCaseSteps(testCaseId);
+              
+              // Filter out steps to delete (convert to 0-based for array)
+              const remainingSteps = existingSteps
+                .filter((_: any, idx: number) => !deleteIndexes.includes(idx + 1))
+                .map((step: any, idx: number) => ({
+                  index: idx + 1,
+                  description: step.inline?.description || step.description,
+                  testData: step.inline?.testData || step.testData || '',
+                  expectedResult: step.inline?.expectedResult || step.expectedResult,
+                }));
+              
+              if (remainingSteps.length > 0) {
+                await this.createTestCaseSteps(testCaseId, remainingSteps);
+              } else {
+                // If no steps remain, send empty array to clear all steps
+                await this.client.post(
+                  `/testcases/${encodeURIComponent(testCaseId)}/teststeps`,
+                  { mode: 'OVERWRITE', items: [] },
+                  { headers: { 'Content-Type': 'application/json' } }
+                );
+              }
+            }
+            break;
+        }
+      }
+    } catch (error: any) {
+      console.error('Failed to update test case steps:', {
+        testCaseId,
+        error: error.message,
+        response: error.response?.data,
+      });
+      throw error;
+    }
+  }
+
   async getTestCasesAdvanced(projectKey: string, limit = 100, offset = 0): Promise<{
     testCases: ZephyrTestCase[];
     total: number;
@@ -530,14 +689,44 @@ export class ZephyrClient {
         projectKey,
         maxResults: limit,
         startAt: offset,
+        // Request additional fields if supported
+        expand: 'folder,labels,component,priority,status',
       };
       
       const response = await this.client.get('/testcases', { params });
-      console.log('Got test cases, count:', response.data.values?.length || response.data.length);
+      const testCases = response.data.values || response.data || [];
+      
+      console.log('Got test cases, count:', testCases.length);
+      
+      // Log first test case structure for debugging
+      if (testCases.length > 0) {
+        const sample = testCases[0];
+        console.log('Sample test case data structure:', {
+          key: sample.key,
+          name: sample.name,
+          hasFolder: !!sample.folder,
+          folderStructure: sample.folder ? {
+            type: typeof sample.folder,
+            keys: typeof sample.folder === 'object' ? Object.keys(sample.folder) : 'not-object',
+            id: sample.folder?.id,
+            name: sample.folder?.name,
+            path: sample.folder?.path
+          } : null,
+          hasLabels: !!sample.labels,
+          labelsStructure: {
+            type: Array.isArray(sample.labels) ? 'array' : typeof sample.labels,
+            count: Array.isArray(sample.labels) ? sample.labels.length : 0,
+            sample: sample.labels && sample.labels[0] ? 
+              (typeof sample.labels[0] === 'object' ? 
+                { type: 'object', keys: Object.keys(sample.labels[0]) } : 
+                sample.labels[0]) : null
+          }
+        });
+      }
       
       return {
-        testCases: response.data.values || response.data || [],
-        total: response.data.total || (response.data.values ? response.data.values.length : 0) || 0,
+        testCases: testCases,
+        total: response.data.total || testCases.length,
       };
     } catch (error: any) {
       console.error('Failed to get test cases:', error.response?.data);
