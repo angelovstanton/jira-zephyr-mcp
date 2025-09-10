@@ -80,19 +80,87 @@ export const createTestCaseSchema = z.object({
   }).optional(),
 });
 
-export const searchTestCasesSchema = z.object({
-  projectKey: z.string().min(1, 'Project key is required'),
-  query: z.string().optional(),
-  limit: z.number().min(1).max(100).default(50),
-});
-
 export const getTestCaseSchema = z.object({
-  testCaseId: z.string().min(1, 'Test case ID is required'),
+  testCaseId: z.string()
+    .min(1, 'Test case ID is required')
+    .regex(/^[A-Z]+-T\d+$/, 'Test case ID must be in format PROJECT-T123 (e.g., CSRP-T123). For searching test cases, use get_test_cases instead.'),
 });
 
 export const createMultipleTestCasesSchema = z.object({
   testCases: z.array(createTestCaseSchema).min(1, 'At least one test case is required'),
   continueOnError: z.boolean().default(true),
+});
+
+export const getTestCasesSchema = z.object({
+  projectKey: z.string().min(1, 'Project key is required'),
+  filters: z.object({
+    // Title filters
+    title: z.string().optional().describe('Exact title match'),
+    titleContains: z.string().optional().describe('Title contains text (case-insensitive)'),
+    titleStartsWith: z.string().optional().describe('Title starts with text'),
+    titleEndsWith: z.string().optional().describe('Title ends with text'),
+    
+    // Content filters
+    objectiveContains: z.string().optional().describe('Search in test objective/description'),
+    preconditionContains: z.string().optional().describe('Search in preconditions'),
+    
+    // Metadata filters
+    status: z.union([
+      z.string(),
+      z.array(z.string())
+    ]).optional().describe('Filter by status (single or multiple)'),
+    priority: z.union([
+      z.string(),
+      z.array(z.string())
+    ]).optional().describe('Filter by priority (e.g., High, Medium, Low)'),
+    
+    // Organization filters
+    folderId: z.string().optional().describe('Filter by folder ID'),
+    folderPath: z.string().optional().describe('Filter by folder path (e.g., /Regression/API)'),
+    labels: z.array(z.string()).optional().describe('Filter by labels/tags'),
+    componentId: z.string().optional().describe('Filter by component'),
+    
+    // User filters
+    owner: z.string().optional().describe('Filter by owner email or ID'),
+    createdBy: z.string().optional().describe('Filter by creator'),
+    lastModifiedBy: z.string().optional().describe('Filter by last modifier'),
+    
+    // Date filters
+    createdAfter: z.string().optional().describe('Created after date (ISO format)'),
+    createdBefore: z.string().optional().describe('Created before date (ISO format)'),
+    modifiedAfter: z.string().optional().describe('Modified after date (ISO format)'),
+    modifiedBefore: z.string().optional().describe('Modified before date (ISO format)'),
+    
+    // Test execution filters
+    hasLinkedIssues: z.boolean().optional().describe('Has linked JIRA issues'),
+    hasTestSteps: z.boolean().optional().describe('Has test steps defined'),
+    estimatedTimeMin: z.number().optional().describe('Minimum estimated time in minutes'),
+    estimatedTimeMax: z.number().optional().describe('Maximum estimated time in minutes'),
+    
+    // Advanced filters
+    customFields: z.record(z.any()).optional().describe('Filter by custom field values'),
+    testType: z.enum(['MANUAL', 'AUTOMATED', 'BOTH']).optional().describe('Filter by test type'),
+    testScriptType: z.enum(['STEP_BY_STEP', 'PLAIN_TEXT', 'NONE']).optional().describe('Filter by script type'),
+  }).optional(),
+  
+  // Search options
+  searchMode: z.enum(['AND', 'OR']).default('AND').describe('How to combine filters'),
+  caseSensitive: z.boolean().default(false).describe('Case-sensitive text matching'),
+  includeArchived: z.boolean().default(false).describe('Include archived test cases'),
+  
+  // Pagination and sorting
+  limit: z.number().min(1).max(500).default(100).describe('Maximum results to return'),
+  offset: z.number().min(0).default(0).describe('Number of results to skip'),
+  sortBy: z.enum([
+    'name', 'createdOn', 'lastModifiedOn', 'priority', 
+    'status', 'estimatedTime', 'folder'
+  ]).default('name').describe('Field to sort by'),
+  sortOrder: z.enum(['asc', 'desc']).default('asc').describe('Sort order'),
+  
+  // Response options
+  includeDetails: z.boolean().default(false).describe('Include full test case details'),
+  includeSteps: z.boolean().default(false).describe('Include test steps in response'),
+  includeLinks: z.boolean().default(false).describe('Include linked issues in response'),
 });
 
 export type CreateTestPlanInput = z.infer<typeof createTestPlanSchema>;
@@ -105,6 +173,6 @@ export type GetTestExecutionStatusInput = z.infer<typeof getTestExecutionStatusS
 export type LinkTestsToIssuesInput = z.infer<typeof linkTestsToIssuesSchema>;
 export type GenerateTestReportInput = z.infer<typeof generateTestReportSchema>;
 export type CreateTestCaseInput = z.infer<typeof createTestCaseSchema>;
-export type SearchTestCasesInput = z.infer<typeof searchTestCasesSchema>;
 export type GetTestCaseInput = z.infer<typeof getTestCaseSchema>;
 export type CreateMultipleTestCasesInput = z.infer<typeof createMultipleTestCasesSchema>;
+export type GetTestCasesInput = z.infer<typeof getTestCasesSchema>;

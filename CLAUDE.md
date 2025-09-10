@@ -1,43 +1,76 @@
-# Jira Zephyr MCP Server
+# CLAUDE.md
 
-## MCP Server Configuration
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is an MCP (Model Context Protocol) server that provides integration with JIRA's Zephyr test management system.
+## Project Overview
 
-### Environment Variables
+MCP (Model Context Protocol) server for JIRA Zephyr Scale integration, enabling test management operations through a standardized protocol. Built with TypeScript, uses ESM modules, and communicates via stdio.
 
-The following environment variables are required:
+## Essential Commands
 
-- `JIRA_BASE_URL`: Your JIRA instance URL (e.g., https://yourcompany.atlassian.net)
-- `JIRA_USERNAME`: Your JIRA email address
-- `JIRA_API_TOKEN`: Your JIRA API token (generate from Account Settings > Security > API tokens)
-- `ZEPHYR_API_TOKEN`: Your Zephyr Scale API token
+```bash
+# Development
+npm run dev          # Watch mode with auto-rebuild
+npm run build        # Build TypeScript to dist/
+npm run typecheck    # TypeScript type checking (tsc --noEmit)
+npm run lint         # ESLint validation
+npm start            # Run built server (node dist/index.js)
 
-### Available Tools
+# Docker
+docker build -t jira-zephyr-mcp:latest .
+docker run -d --name jira-zephyr-mcp \
+  -e JIRA_BASE_URL=... \
+  -e JIRA_USERNAME=... \
+  -e JIRA_API_TOKEN=... \
+  -e ZEPHYR_API_TOKEN=... \
+  jira-zephyr-mcp:latest
+```
 
-- `read_jira_issue`: Read JIRA issue details and metadata
-- `create_test_plan`: Create a new test plan in Zephyr
-- `list_test_plans`: List existing test plans
-- `create_test_cycle`: Create a new test execution cycle
-- `list_test_cycles`: List existing test cycles with execution status
-- `execute_test`: Update test execution results
-- `get_test_execution_status`: Get test execution progress and statistics
-- `link_tests_to_issues`: Associate test cases with JIRA issues
-- `generate_test_report`: Generate test execution report
-- `create_test_case`: Create a new test case in Zephyr
-- `create_multiple_test_cases`: Create multiple test cases in Zephyr at once
-- `search_test_cases`: Search for test cases in a project
-- `get_test_case`: Get detailed information about a specific test case
+## Architecture
 
-### Setup Instructions
+### Core Components
 
-1. Build the project: `npm run build`
-2. Set your environment variables
-3. Run: `node dist/index.js`
+**MCP Server (src/index.ts:49-579)**
+- Stdio-based transport for tool communication
+- Tool registration and request handling
+- Input validation using Zod schemas before tool execution
 
-### Development
+**API Clients**
+- `JiraClient` (src/clients/jira-client.ts): JIRA REST API v2 integration
+- `ZephyrClient` (src/clients/zephyr-client.ts): Zephyr Scale API v2 integration (https://api.zephyrscale.smartbear.com/v2)
 
-- `npm run dev`: Watch mode for development
-- `npm run build`: Build the project
-- `npm run typecheck`: Check TypeScript types
-- `npm run lint`: Lint the code
+**Tool Implementations (src/tools/)**
+- Each tool module exports functions that use the appropriate client
+- Tools handle: test plans, test cycles, test cases, test execution, JIRA issues
+- All tools return structured JSON responses
+
+### Data Flow
+1. MCP client sends tool request via stdio → 
+2. Server validates input with Zod schema (src/utils/validation.ts) → 
+3. Tool function calls appropriate API client → 
+4. Client makes authenticated HTTP request → 
+5. Response formatted and returned via MCP protocol
+
+### Authentication
+- Environment variables loaded via dotenv
+- `getJiraHeaders()` returns Basic auth header (base64 encoded username:token)
+- `getZephyrHeaders()` returns Bearer token authorization
+- Configuration validated on startup (src/utils/config.ts)
+
+## Key Implementation Details
+
+- **TypeScript Config**: ESNext target, ESM modules, strict mode enabled
+- **Build System**: tsup for bundling, outputs ESM format with shebang header
+- **Error Handling**: McpError with proper error codes, API error mapping
+- **Test Scripts**: Support both STEP_BY_STEP (with index, description, expectedResult) and PLAIN_TEXT formats
+- **Bulk Operations**: `create_multiple_test_cases` supports batch creation with continueOnError flag
+
+## Available MCP Tools
+
+Core tools exposed via MCP protocol:
+- `read_jira_issue` - Fetch JIRA issue with optional field filtering
+- `create_test_plan`, `list_test_plans` - Test plan management
+- `create_test_cycle`, `list_test_cycles` - Test cycle operations  
+- `create_test_case`, `create_multiple_test_cases`, `search_test_cases`, `get_test_case` - Test case CRUD
+- `execute_test`, `get_test_execution_status` - Test execution tracking
+- `link_tests_to_issues`, `generate_test_report` - Integration and reporting

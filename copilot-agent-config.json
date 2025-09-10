@@ -1,0 +1,45 @@
+{
+  "name": "jira-zephyr-agent",
+  "description": "JIRA Zephyr Test Management Agent",
+  "version": "1.0.0",
+  "mcp": {
+    "servers": {
+      "jira-zephyr": {
+        "command": "docker",
+        "args": [
+          "run",
+          "--rm",
+          "-i",
+          "-e", "JIRA_BASE_URL",
+          "-e", "JIRA_USERNAME",
+          "-e", "JIRA_API_TOKEN",
+          "-e", "ZEPHYR_API_TOKEN",
+          "jira-zephyr-mcp:latest"
+        ],
+        "env": {
+          "JIRA_BASE_URL": "${JIRA_BASE_URL}",
+          "JIRA_USERNAME": "${JIRA_USERNAME}",
+          "JIRA_API_TOKEN": "${JIRA_API_TOKEN}",
+          "ZEPHYR_API_TOKEN": "${ZEPHYR_API_TOKEN}"
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "tools": [
+      "read_jira_issue",
+      "create_test_plan",
+      "list_test_plans",
+      "create_test_cycle",
+      "list_test_cycles",
+      "execute_test",
+      "get_test_execution_status",
+      "link_tests_to_issues",
+      "generate_test_report",
+      "create_test_case",
+      "create_multiple_test_cases",
+      "search_test_cases",
+      "get_test_case"
+    ]
+  }
+}

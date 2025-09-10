@@ -16,7 +16,7 @@ import {
   linkTestsToIssues,
   generateTestReport,
 } from './tools/test-execution.js';
-import { createTestCase, searchTestCases, getTestCase, createMultipleTestCases } from './tools/test-cases.js';
+import { createTestCase, getTestCase, createMultipleTestCases, getTestCases } from './tools/test-cases.js';
 import {
   readJiraIssueSchema,
   createTestPlanSchema,
@@ -28,9 +28,9 @@ import {
   linkTestsToIssuesSchema,
   generateTestReportSchema,
   createTestCaseSchema,
-  searchTestCasesSchema,
   getTestCaseSchema,
   createMultipleTestCasesSchema,
+  getTestCasesSchema,
   ReadJiraIssueInput,
   CreateTestPlanInput,
   ListTestPlansInput,
@@ -41,9 +41,9 @@ import {
   LinkTestsToIssuesInput,
   GenerateTestReportInput,
   CreateTestCaseInput,
-  SearchTestCasesInput,
   GetTestCaseInput,
   CreateMultipleTestCasesInput,
+  GetTestCasesInput,
 } from './utils/validation.js';
 
 const server = new Server(
@@ -225,25 +225,12 @@ const TOOLS = [
     },
   },
   {
-    name: 'search_test_cases',
-    description: 'Search for test cases in a project',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectKey: { type: 'string', description: 'JIRA project key' },
-        query: { type: 'string', description: 'Search query (optional)' },
-        limit: { type: 'number', description: 'Maximum number of results (default: 50)' },
-      },
-      required: ['projectKey'],
-    },
-  },
-  {
     name: 'get_test_case',
-    description: 'Get detailed information about a specific test case',
+    description: 'Get detailed information about a specific test case when you already know its exact ID (e.g., "CSRP-T123"). Do NOT use this for searching or listing test cases.',
     inputSchema: {
       type: 'object',
       properties: {
-        testCaseId: { type: 'string', description: 'Test case ID or key' },
+        testCaseId: { type: 'string', description: 'Exact test case ID in format PROJECT-T123 (e.g., "CSRP-T123")' },
       },
       required: ['testCaseId'],
     },
@@ -325,6 +312,96 @@ const TOOLS = [
       required: ['testCases'],
     },
   },
+  {
+    name: 'get_test_cases',
+    description: 'Advanced search for test cases with multiple filter options. Use this for finding test cases by title, content, status, priority, folder, dates, and more.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectKey: { type: 'string', description: 'JIRA project key (required)' },
+        filters: {
+          type: 'object',
+          description: 'Filter criteria (all optional)',
+          properties: {
+            // Title filters
+            title: { type: 'string', description: 'Exact title match' },
+            titleContains: { type: 'string', description: 'Title contains text (case-insensitive by default)' },
+            titleStartsWith: { type: 'string', description: 'Title starts with text' },
+            titleEndsWith: { type: 'string', description: 'Title ends with text' },
+            
+            // Content filters
+            objectiveContains: { type: 'string', description: 'Search in test objective/description' },
+            preconditionContains: { type: 'string', description: 'Search in preconditions' },
+            
+            // Metadata filters
+            status: { 
+              oneOf: [
+                { type: 'string' },
+                { type: 'array', items: { type: 'string' } }
+              ],
+              description: 'Filter by status (e.g., "Draft", "Approved", or ["Draft", "Approved"])' 
+            },
+            priority: { 
+              oneOf: [
+                { type: 'string' },
+                { type: 'array', items: { type: 'string' } }
+              ],
+              description: 'Filter by priority (e.g., "High", "Medium", "Low")' 
+            },
+            
+            // Organization filters
+            folderId: { type: 'string', description: 'Filter by folder ID' },
+            folderPath: { type: 'string', description: 'Filter by folder path (e.g., "/Regression/API")' },
+            labels: { type: 'array', items: { type: 'string' }, description: 'Filter by labels/tags' },
+            componentId: { type: 'string', description: 'Filter by component ID' },
+            
+            // User filters
+            owner: { type: 'string', description: 'Filter by owner email or ID' },
+            createdBy: { type: 'string', description: 'Filter by creator' },
+            lastModifiedBy: { type: 'string', description: 'Filter by last modifier' },
+            
+            // Date filters (ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)
+            createdAfter: { type: 'string', description: 'Created after date' },
+            createdBefore: { type: 'string', description: 'Created before date' },
+            modifiedAfter: { type: 'string', description: 'Modified after date' },
+            modifiedBefore: { type: 'string', description: 'Modified before date' },
+            
+            // Test execution filters
+            hasLinkedIssues: { type: 'boolean', description: 'Has linked JIRA issues' },
+            hasTestSteps: { type: 'boolean', description: 'Has test steps defined' },
+            estimatedTimeMin: { type: 'number', description: 'Minimum estimated time in minutes' },
+            estimatedTimeMax: { type: 'number', description: 'Maximum estimated time in minutes' },
+            
+            // Advanced filters
+            testType: { type: 'string', enum: ['MANUAL', 'AUTOMATED', 'BOTH'], description: 'Filter by test type' },
+            testScriptType: { type: 'string', enum: ['STEP_BY_STEP', 'PLAIN_TEXT', 'NONE'], description: 'Filter by script type' },
+          },
+        },
+        
+        // Search options
+        searchMode: { type: 'string', enum: ['AND', 'OR'], default: 'AND', description: 'How to combine filters' },
+        caseSensitive: { type: 'boolean', default: false, description: 'Case-sensitive text matching' },
+        includeArchived: { type: 'boolean', default: false, description: 'Include archived test cases' },
+        
+        // Pagination and sorting
+        limit: { type: 'number', default: 100, minimum: 1, maximum: 500, description: 'Maximum results to return' },
+        offset: { type: 'number', default: 0, minimum: 0, description: 'Number of results to skip' },
+        sortBy: { 
+          type: 'string', 
+          enum: ['name', 'createdOn', 'lastModifiedOn', 'priority', 'status', 'estimatedTime', 'folder'],
+          default: 'name',
+          description: 'Field to sort by' 
+        },
+        sortOrder: { type: 'string', enum: ['asc', 'desc'], default: 'asc', description: 'Sort order' },
+        
+        // Response options
+        includeDetails: { type: 'boolean', default: false, description: 'Include full test case details' },
+        includeSteps: { type: 'boolean', default: false, description: 'Include test steps in response' },
+        includeLinks: { type: 'boolean', default: false, description: 'Include linked issues in response' },
+      },
+      required: ['projectKey'],
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -332,14 +409,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 }));
 
 const validateInput = <T>(schema: any, input: unknown, toolName: string): T => {
+  console.log(`Validating input for ${toolName}:`, JSON.stringify(input, null, 2));
   const result = schema.safeParse(input);
   if (!result.success) {
     const errors = result.error.errors.map((err: any) => `${err.path.join('.')}: ${err.message}`);
+    console.error(`Validation failed for ${toolName}:`, errors);
     throw new McpError(
       ErrorCode.InvalidParams,
       `Invalid parameters for ${toolName}:\n${errors.join('\n')}`
     );
   }
+  console.log(`Validation successful for ${toolName}:`, JSON.stringify(result.data, null, 2));
   return result.data as T;
 };
 
@@ -468,28 +548,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case 'search_test_cases': {
-        const validatedArgs = validateInput<SearchTestCasesInput>(searchTestCasesSchema, args, 'search_test_cases');
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(await searchTestCases(validatedArgs), null, 2),
-            },
-          ],
-        };
-      }
 
       case 'get_test_case': {
-        const validatedArgs = validateInput<GetTestCaseInput>(getTestCaseSchema, args, 'get_test_case');
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(await getTestCase(validatedArgs), null, 2),
-            },
-          ],
-        };
+        console.log('get_test_case called with args:', JSON.stringify(args, null, 2));
+        console.log('WARNING: get_test_case requires an exact test case ID like "CSRP-T123"');
+        console.log('If you want to search or list test cases, use get_test_cases instead');
+        
+        try {
+          const validatedArgs = validateInput<GetTestCaseInput>(getTestCaseSchema, args, 'get_test_case');
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(await getTestCase(validatedArgs), null, 2),
+              },
+            ],
+          };
+        } catch (error: any) {
+          if (error.message && error.message.includes('format PROJECT-T123')) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              'get_test_case requires an exact test case ID (e.g., "CSRP-T123"). To search or list test cases, please use the get_test_cases tool instead.'
+            );
+          }
+          throw error;
+        }
       }
 
       case 'debug_test_case_steps': {
@@ -527,6 +610,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: 'text',
               text: JSON.stringify(await createMultipleTestCases(validatedArgs), null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'get_test_cases': {
+        console.log('get_test_cases called with args:', JSON.stringify(args, null, 2));
+        const validatedArgs = validateInput<GetTestCasesInput>(getTestCasesSchema, args, 'get_test_cases');
+        console.log('Validated args for get_test_cases:', JSON.stringify(validatedArgs, null, 2));
+        const result = await getTestCases(validatedArgs);
+        console.log('get_test_cases result summary:', {
+          success: result.success,
+          testCasesFound: result.data?.testCases?.length || 0,
+          total: result.data?.total || 0
+        });
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };

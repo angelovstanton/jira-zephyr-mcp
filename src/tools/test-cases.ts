@@ -1,11 +1,11 @@
 import { ZephyrClient } from '../clients/zephyr-client.js';
 import {
   createTestCaseSchema,
-  searchTestCasesSchema,
   createMultipleTestCasesSchema,
+  getTestCasesSchema,
   CreateTestCaseInput,
-  SearchTestCasesInput,
   CreateMultipleTestCasesInput,
+  GetTestCasesInput,
 } from '../utils/validation.js';
 
 let zephyrClient: ZephyrClient | null = null;
@@ -84,46 +84,6 @@ export const createTestCase = async (input: CreateTestCaseInput) => {
   }
 };
 
-export const searchTestCases = async (input: SearchTestCasesInput) => {
-  const validatedInput = searchTestCasesSchema.parse(input);
-  
-  try {
-    const result = await getZephyrClient().searchTestCases(
-      validatedInput.projectKey,
-      validatedInput.query,
-      validatedInput.limit
-    );
-    
-    return {
-      success: true,
-      data: {
-        testCases: result.testCases.map(testCase => ({
-          id: testCase.id,
-          key: testCase.key,
-          name: testCase.name,
-          objective: testCase.objective,
-          precondition: testCase.precondition,
-          estimatedTime: testCase.estimatedTime,
-          priority: testCase.priority?.id,
-          status: testCase.status?.id,
-          folder: testCase.folder?.id,
-          labels: testCase.labels || [],
-          component: testCase.component?.id,
-          owner: testCase.owner?.accountId,
-          createdOn: testCase.createdOn,
-          linkedIssues: testCase.links?.issues?.length || 0,
-        })),
-        total: result.total,
-        projectKey: validatedInput.projectKey,
-      },
-    };
-  } catch (error: any) {
-    return {
-      success: false,
-      error: error.response?.data?.message || error.message,
-    };
-  }
-};
 
 export const getTestCase = async (input: { testCaseId: string }) => {
   try {
@@ -162,6 +122,312 @@ export const getTestCase = async (input: { testCaseId: string }) => {
     return {
       success: false,
       error: error.response?.data?.message || error.message,
+    };
+  }
+};
+
+export const getTestCases = async (input: GetTestCasesInput) => {
+  const validatedInput = getTestCasesSchema.parse(input);
+  
+  try {
+    const zephyr = getZephyrClient();
+    
+    // First, get all test cases for the project (with pagination)
+    const allTestCases = await zephyr.getTestCasesAdvanced(
+      validatedInput.projectKey,
+      validatedInput.limit || 100,
+      validatedInput.offset || 0
+    );
+    
+    let filteredTestCases = allTestCases.testCases;
+    
+    // Apply filters if provided
+    if (validatedInput.filters) {
+      const filters = validatedInput.filters;
+      const searchMode = validatedInput.searchMode || 'AND';
+      const caseSensitive = validatedInput.caseSensitive || false;
+      
+      filteredTestCases = filteredTestCases.filter(testCase => {
+        const matches: boolean[] = [];
+        
+        // Title filters
+        if (filters.title !== undefined) {
+          const titleMatch = caseSensitive 
+            ? testCase.name === filters.title
+            : testCase.name?.toLowerCase() === filters.title.toLowerCase();
+          matches.push(titleMatch);
+        }
+        
+        if (filters.titleContains !== undefined) {
+          const contains = caseSensitive
+            ? testCase.name?.includes(filters.titleContains)
+            : testCase.name?.toLowerCase().includes(filters.titleContains.toLowerCase());
+          matches.push(contains || false);
+        }
+        
+        if (filters.titleStartsWith !== undefined) {
+          const startsWith = caseSensitive
+            ? testCase.name?.startsWith(filters.titleStartsWith)
+            : testCase.name?.toLowerCase().startsWith(filters.titleStartsWith.toLowerCase());
+          matches.push(startsWith || false);
+        }
+        
+        if (filters.titleEndsWith !== undefined) {
+          const endsWith = caseSensitive
+            ? testCase.name?.endsWith(filters.titleEndsWith)
+            : testCase.name?.toLowerCase().endsWith(filters.titleEndsWith.toLowerCase());
+          matches.push(endsWith || false);
+        }
+        
+        // Content filters
+        if (filters.objectiveContains !== undefined) {
+          const contains = caseSensitive
+            ? testCase.objective?.includes(filters.objectiveContains)
+            : testCase.objective?.toLowerCase().includes(filters.objectiveContains.toLowerCase());
+          matches.push(contains || false);
+        }
+        
+        if (filters.preconditionContains !== undefined) {
+          const contains = caseSensitive
+            ? testCase.precondition?.includes(filters.preconditionContains)
+            : testCase.precondition?.toLowerCase().includes(filters.preconditionContains.toLowerCase());
+          matches.push(contains || false);
+        }
+        
+        // Status filter
+        if (filters.status !== undefined) {
+          const statusList = Array.isArray(filters.status) ? filters.status : [filters.status];
+          const statusMatch = statusList.some(s => {
+            const statusName = typeof testCase.status === 'object' ? testCase.status?.name : testCase.status;
+            return caseSensitive
+              ? statusName === s
+              : statusName?.toLowerCase() === s.toLowerCase();
+          });
+          matches.push(statusMatch);
+        }
+        
+        // Priority filter
+        if (filters.priority !== undefined) {
+          const priorityList = Array.isArray(filters.priority) ? filters.priority : [filters.priority];
+          const priorityMatch = priorityList.some(p => {
+            const priorityName = typeof testCase.priority === 'object' ? testCase.priority?.name : testCase.priority;
+            return caseSensitive
+              ? priorityName === p
+              : priorityName?.toLowerCase() === p.toLowerCase();
+          });
+          matches.push(priorityMatch);
+        }
+        
+        // Folder filter
+        if (filters.folderId !== undefined) {
+          const folderMatch = testCase.folder?.id === filters.folderId;
+          matches.push(folderMatch);
+        }
+        
+        if (filters.folderPath !== undefined) {
+          const folderPath = testCase.folder?.name || testCase.folder?.path;
+          const pathMatch = caseSensitive
+            ? folderPath === filters.folderPath
+            : folderPath?.toLowerCase() === filters.folderPath.toLowerCase();
+          matches.push(pathMatch || false);
+        }
+        
+        // Labels filter
+        if (filters.labels !== undefined && filters.labels.length > 0) {
+          const labelMatch = filters.labels.some(label => 
+            testCase.labels?.some(tcLabel => 
+              caseSensitive 
+                ? tcLabel === label
+                : tcLabel.toLowerCase() === label.toLowerCase()
+            )
+          );
+          matches.push(labelMatch);
+        }
+        
+        // Component filter
+        if (filters.componentId !== undefined) {
+          const componentMatch = testCase.component?.id === filters.componentId;
+          matches.push(componentMatch);
+        }
+        
+        // Owner filter
+        if (filters.owner !== undefined) {
+          const ownerMatch = testCase.owner?.accountId === filters.owner || 
+                           testCase.owner?.emailAddress === filters.owner;
+          matches.push(ownerMatch);
+        }
+        
+        // Date filters
+        if (filters.createdAfter !== undefined) {
+          const createdDate = new Date(testCase.createdOn);
+          const filterDate = new Date(filters.createdAfter);
+          matches.push(createdDate >= filterDate);
+        }
+        
+        if (filters.createdBefore !== undefined) {
+          const createdDate = new Date(testCase.createdOn);
+          const filterDate = new Date(filters.createdBefore);
+          matches.push(createdDate <= filterDate);
+        }
+        
+        if (filters.modifiedAfter !== undefined && testCase.lastModifiedOn) {
+          const modifiedDate = new Date(testCase.lastModifiedOn);
+          const filterDate = new Date(filters.modifiedAfter);
+          matches.push(modifiedDate >= filterDate);
+        }
+        
+        if (filters.modifiedBefore !== undefined && testCase.lastModifiedOn) {
+          const modifiedDate = new Date(testCase.lastModifiedOn);
+          const filterDate = new Date(filters.modifiedBefore);
+          matches.push(modifiedDate <= filterDate);
+        }
+        
+        // Test execution filters
+        if (filters.hasLinkedIssues !== undefined) {
+          const hasLinks = (testCase.links?.issues?.length || 0) > 0;
+          matches.push(hasLinks === filters.hasLinkedIssues);
+        }
+        
+        if (filters.hasTestSteps !== undefined) {
+          const hasSteps = testCase.testScript?.type === 'STEP_BY_STEP' && 
+                         (testCase.testScript?.steps?.length || 0) > 0;
+          matches.push(hasSteps === filters.hasTestSteps);
+        }
+        
+        if (filters.estimatedTimeMin !== undefined) {
+          matches.push((testCase.estimatedTime || 0) >= filters.estimatedTimeMin);
+        }
+        
+        if (filters.estimatedTimeMax !== undefined) {
+          matches.push((testCase.estimatedTime || 0) <= filters.estimatedTimeMax);
+        }
+        
+        // Test type filter
+        if (filters.testType !== undefined) {
+          const testTypeMatch = testCase.testType === filters.testType;
+          matches.push(testTypeMatch);
+        }
+        
+        // Test script type filter
+        if (filters.testScriptType !== undefined) {
+          const scriptTypeMatch = filters.testScriptType === 'NONE' 
+            ? !testCase.testScript || !testCase.testScript.type
+            : testCase.testScript?.type === filters.testScriptType;
+          matches.push(scriptTypeMatch);
+        }
+        
+        // Custom fields filter
+        if (filters.customFields !== undefined) {
+          const customFieldMatches = Object.entries(filters.customFields).every(([key, value]) => {
+            return testCase.customFields?.[key] === value;
+          });
+          matches.push(customFieldMatches);
+        }
+        
+        // Apply search mode (AND/OR)
+        if (matches.length === 0) return true; // No filters applied
+        return searchMode === 'AND' 
+          ? matches.every(m => m)
+          : matches.some(m => m);
+      });
+    }
+    
+    // Sort results
+    if (validatedInput.sortBy) {
+      filteredTestCases.sort((a, b) => {
+        let aVal: any, bVal: any;
+        
+        switch (validatedInput.sortBy) {
+          case 'name':
+            aVal = a.name || '';
+            bVal = b.name || '';
+            break;
+          case 'createdOn':
+            aVal = new Date(a.createdOn).getTime();
+            bVal = new Date(b.createdOn).getTime();
+            break;
+          case 'lastModifiedOn':
+            aVal = a.lastModifiedOn ? new Date(a.lastModifiedOn).getTime() : 0;
+            bVal = b.lastModifiedOn ? new Date(b.lastModifiedOn).getTime() : 0;
+            break;
+          case 'priority':
+            aVal = typeof a.priority === 'object' ? a.priority?.name : a.priority || '';
+            bVal = typeof b.priority === 'object' ? b.priority?.name : b.priority || '';
+            break;
+          case 'status':
+            aVal = typeof a.status === 'object' ? a.status?.name : a.status || '';
+            bVal = typeof b.status === 'object' ? b.status?.name : b.status || '';
+            break;
+          case 'estimatedTime':
+            aVal = a.estimatedTime || 0;
+            bVal = b.estimatedTime || 0;
+            break;
+          case 'folder':
+            aVal = a.folder?.name || '';
+            bVal = b.folder?.name || '';
+            break;
+          default:
+            aVal = a.name || '';
+            bVal = b.name || '';
+        }
+        
+        const comparison = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+        return validatedInput.sortOrder === 'asc' ? comparison : -comparison;
+      });
+    }
+    
+    // Include additional details if requested
+    let enrichedTestCases = filteredTestCases;
+    if (validatedInput.includeSteps || validatedInput.includeDetails) {
+      enrichedTestCases = await Promise.all(
+        filteredTestCases.map(async (testCase) => {
+          const enriched = { ...testCase };
+          
+          if (validatedInput.includeSteps) {
+            try {
+              enriched.steps = await zephyr.getTestCaseSteps(testCase.key);
+            } catch (error) {
+              console.warn(`Failed to get steps for ${testCase.key}:`, error);
+              enriched.steps = [];
+            }
+          }
+          
+          if (validatedInput.includeDetails) {
+            try {
+              const detailed = await zephyr.getTestCase(testCase.key);
+              Object.assign(enriched, detailed);
+            } catch (error) {
+              console.warn(`Failed to get details for ${testCase.key}:`, error);
+            }
+          }
+          
+          return enriched;
+        })
+      );
+    }
+    
+    return {
+      success: true,
+      data: {
+        testCases: enrichedTestCases,
+        total: enrichedTestCases.length,
+        totalAvailable: allTestCases.total,
+        filters: validatedInput.filters,
+        searchMode: validatedInput.searchMode,
+        sortBy: validatedInput.sortBy,
+        sortOrder: validatedInput.sortOrder,
+      },
+      message: `Found ${enrichedTestCases.length} test cases matching your criteria`,
+    };
+    
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.response?.data?.message || error.message,
+      details: {
+        originalError: error.response?.data || error.message,
+        status: error.response?.status,
+      },
     };
   }
 };

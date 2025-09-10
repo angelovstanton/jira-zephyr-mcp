@@ -185,17 +185,91 @@ export class ZephyrClient {
     testCases: ZephyrTestCase[];
     total: number;
   }> {
-    const params = {
-      projectKey,
-      query,
-      maxResults: limit,
-    };
-
-    const response = await this.client.get('/testcases/search', { params });
-    return {
-      testCases: response.data.values || response.data,
-      total: response.data.total || response.data.length,
-    };
+    console.log('Searching test cases for project:', projectKey, 'with query:', query);
+    
+    // First, let's try just getting all test cases for the project without search
+    // This will help us understand if the issue is with the search or the endpoint
+    if (!query) {
+      try {
+        console.log('No query provided, fetching all test cases for project');
+        const params = {
+          projectKey,
+          maxResults: limit,
+        };
+        
+        const response = await this.client.get('/testcases', { params });
+        console.log('Got test cases without search, status:', response.status);
+        
+        return {
+          testCases: response.data.values || response.data || [],
+          total: response.data.total || (response.data.values ? response.data.values.length : 0) || 0,
+        };
+      } catch (error: any) {
+        console.error('Failed to get test cases without search:', error.response?.data);
+      }
+    }
+    
+    // If there's a query, we need to figure out the correct search format
+    // Zephyr Scale API might use different query formats
+    
+    // Try Option 1: Using JQL-like query with the /testcases endpoint
+    try {
+      console.log('Trying Option 1: /testcases with JQL query');
+      const params: any = {
+        projectKey,
+        maxResults: limit,
+      };
+      
+      // Try different query parameter names that Zephyr might expect
+      if (query) {
+        // Convert JQL-like syntax to what Zephyr expects
+        // "name ~ Login" might need to be just "Login" for text search
+        if (query.includes('name ~')) {
+          // Extract the search term from "name ~ Login"
+          const searchTerm = query.replace(/name\s*~\s*"?([^"]*)"?/, '$1').trim();
+          params.query = searchTerm;
+          console.log('Extracted search term:', searchTerm);
+        } else {
+          params.query = query;
+        }
+      }
+      
+      const response = await this.client.get('/testcases', { params });
+      console.log('Option 1 success, status:', response.status);
+      
+      return {
+        testCases: response.data.values || response.data || [],
+        total: response.data.total || (response.data.values ? response.data.values.length : 0) || 0,
+      };
+    } catch (error1: any) {
+      console.error('Option 1 failed:', error1.response?.data);
+      
+      // Try Option 2: Using search endpoint if it exists
+      try {
+        console.log('Trying Option 2: /testcases/search endpoint');
+        const params: any = {
+          projectKey,
+          maxResults: limit,
+        };
+        
+        if (query) {
+          params.q = query; // Some APIs use 'q' for query
+        }
+        
+        const response = await this.client.get('/testcases/search', { params });
+        console.log('Option 2 success, status:', response.status);
+        
+        return {
+          testCases: response.data.values || response.data || [],
+          total: response.data.total || (response.data.values ? response.data.values.length : 0) || 0,
+        };
+      } catch (error2: any) {
+        console.error('Option 2 failed:', error2.response?.data);
+        
+        // Both options failed, throw the original error
+        throw error1;
+      }
+    }
   }
 
   async createTestCase(data: {
@@ -444,5 +518,30 @@ export class ZephyrClient {
   async getTestCaseSteps(testCaseId: string): Promise<any[]> {
     const response = await this.client.get(`/testcases/${testCaseId}/teststeps`);
     return response.data.values || response.data;
+  }
+
+  async getTestCasesAdvanced(projectKey: string, limit = 100, offset = 0): Promise<{
+    testCases: ZephyrTestCase[];
+    total: number;
+  }> {
+    try {
+      console.log('Getting test cases with advanced options for project:', projectKey);
+      const params = {
+        projectKey,
+        maxResults: limit,
+        startAt: offset,
+      };
+      
+      const response = await this.client.get('/testcases', { params });
+      console.log('Got test cases, count:', response.data.values?.length || response.data.length);
+      
+      return {
+        testCases: response.data.values || response.data || [],
+        total: response.data.total || (response.data.values ? response.data.values.length : 0) || 0,
+      };
+    } catch (error: any) {
+      console.error('Failed to get test cases:', error.response?.data);
+      throw error;
+    }
   }
 }
