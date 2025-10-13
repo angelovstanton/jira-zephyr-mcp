@@ -14,7 +14,7 @@ export class ZephyrClient {
 
   constructor() {
     this.client = axios.create({
-      baseURL: 'https://api.zephyrscale.smartbear.com/v2',
+      baseURL: 'https://eu.api.zephyrscale.smartbear.com/v2',
       headers: getZephyrHeaders(),
       timeout: 30000,
     });
