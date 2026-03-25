@@ -3,7 +3,11 @@
     "allow": [
       "Bash(npm run build:*)",
       "Bash(npm install)",
-      "Bash(docker build:*)"
+      "Bash(docker build:*)",
+      "Bash(docker images:*)",
+      "Bash(curl:*)",
+      "Bash(docker tag:*)",
+      "Bash(docker info:*)"
     ],
     "deny": [],
     "ask": []

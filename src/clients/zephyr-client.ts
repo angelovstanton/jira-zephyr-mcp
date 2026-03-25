@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import { getZephyrHeaders } from '../utils/config.js';
+import { getZephyrHeaders, getZephyrBaseUrl } from '../utils/config.js';
 import {
   ZephyrTestPlan,
   ZephyrTestCycle,
@@ -14,7 +14,7 @@ export class ZephyrClient {
 
   constructor() {
     this.client = axios.create({
-      baseURL: 'https://eu.api.zephyrscale.smartbear.com/v2',
+      baseURL: getZephyrBaseUrl(),
       headers: getZephyrHeaders(),
       timeout: 30000,
     });

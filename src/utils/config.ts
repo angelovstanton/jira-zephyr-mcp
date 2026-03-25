@@ -8,6 +8,7 @@ const configSchema = z.object({
   JIRA_USERNAME: z.string().email(),
   JIRA_API_TOKEN: z.string().min(1),
   ZEPHYR_API_TOKEN: z.string().min(1),
+  ZEPHYR_REGION: z.enum(['US', 'EU']).default('US'),
 });
 
 let cachedConfig: z.infer<typeof configSchema> | null = null;
@@ -25,6 +26,7 @@ const validateConfig = () => {
       console.error('- JIRA_USERNAME (valid email)');
       console.error('- JIRA_API_TOKEN (non-empty string)');
       console.error('- ZEPHYR_API_TOKEN (non-empty string)');
+      console.error('- ZEPHYR_REGION (US or EU, defaults to US)');
       throw new Error(errorMessage);
     }
     
@@ -49,6 +51,13 @@ export const getJiraAuth = () => {
     username: config.JIRA_USERNAME,
     password: config.JIRA_API_TOKEN,
   };
+};
+
+export const getZephyrBaseUrl = () => {
+  const config = getAppConfig();
+  return config.ZEPHYR_REGION === 'EU'
+    ? 'https://eu.api.zephyrscale.smartbear.com/v2'
+    : 'https://api.zephyrscale.smartbear.com/v2';
 };
 
 export const getZephyrHeaders = () => {
